@@ -1,0 +1,6 @@
+framework module Pods_EchoProber {
+  umbrella header "Pods-EchoProber-umbrella.h"
+
+  export *
+  module * { export * }
+}
