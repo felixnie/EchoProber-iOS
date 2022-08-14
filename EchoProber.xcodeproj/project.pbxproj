@@ -8,9 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		0BCC81B273DA4AB244F0F3A2 /* Pods_EchoProber.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 437FE91005DF0669627603E3 /* Pods_EchoProber.framework */; };
-		6B110AB62899D706003D0438 /* linear_chirp_500_4410_x1.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6B110AB32899D706003D0438 /* linear_chirp_500_4410_x1.wav */; };
-		6B110AB72899D706003D0438 /* linear_chirp_500_4410_x10.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6B110AB42899D706003D0438 /* linear_chirp_500_4410_x10.wav */; };
 		6B110AB82899D706003D0438 /* linear_chirp_500_4410_x100.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6B110AB52899D706003D0438 /* linear_chirp_500_4410_x100.wav */; };
+		6B29487728A98DC4000A7A99 /* linear_chirp_500_4800_x100.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6B29487628A98DC4000A7A99 /* linear_chirp_500_4800_x100.wav */; };
+		6B29487928A9911F000A7A99 /* linear_chirp_500_4800_x100_hamming.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6B29487828A9911F000A7A99 /* linear_chirp_500_4800_x100_hamming.wav */; };
 		6B5D04D32898E3C300FCABB2 /* EchoProberApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B5D04D22898E3C300FCABB2 /* EchoProberApp.swift */; };
 		6B5D04D52898E3C300FCABB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B5D04D42898E3C300FCABB2 /* ContentView.swift */; };
 		6B5D04D72898E3C700FCABB2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B5D04D62898E3C700FCABB2 /* Assets.xcassets */; };
@@ -44,9 +44,9 @@
 		21EE6D701A9DEA26E280636A /* Pods-EchoProber-EchoProberUITests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-EchoProber-EchoProberUITests.release.xcconfig"; path = "Target Support Files/Pods-EchoProber-EchoProberUITests/Pods-EchoProber-EchoProberUITests.release.xcconfig"; sourceTree = "<group>"; };
 		437FE91005DF0669627603E3 /* Pods_EchoProber.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_EchoProber.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		5D5C97FDD87405BB13FC1DF2 /* Pods-EchoProber.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-EchoProber.release.xcconfig"; path = "Target Support Files/Pods-EchoProber/Pods-EchoProber.release.xcconfig"; sourceTree = "<group>"; };
-		6B110AB32899D706003D0438 /* linear_chirp_500_4410_x1.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = linear_chirp_500_4410_x1.wav; path = ../../linear_chirp_500_4410_x1.wav; sourceTree = "<group>"; };
-		6B110AB42899D706003D0438 /* linear_chirp_500_4410_x10.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = linear_chirp_500_4410_x10.wav; path = ../../linear_chirp_500_4410_x10.wav; sourceTree = "<group>"; };
 		6B110AB52899D706003D0438 /* linear_chirp_500_4410_x100.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = linear_chirp_500_4410_x100.wav; path = ../../linear_chirp_500_4410_x100.wav; sourceTree = "<group>"; };
+		6B29487628A98DC4000A7A99 /* linear_chirp_500_4800_x100.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = linear_chirp_500_4800_x100.wav; path = ../../../MEGA/echo_nie_0124a/echo_server/linear_chirp_500_4800_x100.wav; sourceTree = "<group>"; };
+		6B29487828A9911F000A7A99 /* linear_chirp_500_4800_x100_hamming.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = linear_chirp_500_4800_x100_hamming.wav; path = ../../../MEGA/echo_nie_0124a/echo_server/linear_chirp_500_4800_x100_hamming.wav; sourceTree = "<group>"; };
 		6B5D04CF2898E3C300FCABB2 /* EchoProber.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EchoProber.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6B5D04D22898E3C300FCABB2 /* EchoProberApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoProberApp.swift; sourceTree = "<group>"; };
 		6B5D04D42898E3C300FCABB2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -130,9 +130,9 @@
 		6B5D04D12898E3C300FCABB2 /* EchoProber */ = {
 			isa = PBXGroup;
 			children = (
+				6B29487828A9911F000A7A99 /* linear_chirp_500_4800_x100_hamming.wav */,
 				6BB6762828A6A14B00836D37 /* Info.plist */,
-				6B110AB32899D706003D0438 /* linear_chirp_500_4410_x1.wav */,
-				6B110AB42899D706003D0438 /* linear_chirp_500_4410_x10.wav */,
+				6B29487628A98DC4000A7A99 /* linear_chirp_500_4800_x100.wav */,
 				6B110AB52899D706003D0438 /* linear_chirp_500_4410_x100.wav */,
 				6B5D04D22898E3C300FCABB2 /* EchoProberApp.swift */,
 				6B5D04D42898E3C300FCABB2 /* ContentView.swift */,
@@ -290,10 +290,10 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6B29487928A9911F000A7A99 /* linear_chirp_500_4800_x100_hamming.wav in Resources */,
 				6B5D04DA2898E3C700FCABB2 /* Preview Assets.xcassets in Resources */,
-				6B110AB72899D706003D0438 /* linear_chirp_500_4410_x10.wav in Resources */,
+				6B29487728A98DC4000A7A99 /* linear_chirp_500_4800_x100.wav in Resources */,
 				6B5D04D72898E3C700FCABB2 /* Assets.xcassets in Resources */,
-				6B110AB62899D706003D0438 /* linear_chirp_500_4410_x1.wav in Resources */,
 				6B110AB82899D706003D0438 /* linear_chirp_500_4410_x100.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

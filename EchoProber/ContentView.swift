@@ -33,15 +33,15 @@ struct Home : View {
     // for recorder
     var audioEngine : AVAudioEngine = AVAudioEngine()
     let conversionQueue = DispatchQueue(label: "conversionQueue")
-    let sampleRate = 48000
-    let bufferSize = 4800 // different from actual sample count
+    let sampleRate = 44100
+    let bufferSize = 4800 // may differ from actual sample count
     
     // for player
     @State var audioPlayer : AVAudioPlayer!
     
     // for socket
-    @AppStorage("host") var hostTextField = "10.25.213.103"
-    @AppStorage("port") var portTextField = "8173"
+    @AppStorage("host") var hostTextField = "155.69.142.8"
+    @AppStorage("port") var portTextField = "8170"
     @State var connectedFlag = false
     @State var messageTextField = ""
     
@@ -149,6 +149,11 @@ struct Home : View {
                     } else {
                         self.startRecorder()
                         self.startPlayer()
+                        
+                        sendTCP(message: "Start playing.") // tell server to reset arrays
+                        let terminator = [UInt8]("\r\n".utf8)
+                        sendTCP(data: terminator)
+                        
                         printInfo(message: "Started.")
                         self.playingFlag.toggle()
                     }
@@ -280,6 +285,41 @@ struct Home : View {
         }
     }
     
+    func sendTCP(message: String) {
+        guard let client = client else { return }
+        switch client.send(string: message) {
+        case .success:
+            printInfo(message: "Text sent: \(message)")
+        case .failure(let error):
+            printInfo(message: "Sending failed.")
+            print(error.localizedDescription)
+        }
+    }
+    
+    func sendTCP(data: Data) {
+        guard let client = client else { return }
+        switch client.send(data: data) {
+        case .success:
+            // printInfo(message: "Data sent: \(data.count)")
+            break
+        case .failure(let error):
+            printInfo(message: "Sending failed.")
+            print(error.localizedDescription)
+        }
+    }
+    
+    func sendTCP(data: [UInt8]) {
+        guard let client = client else { return }
+        switch client.send(data: data) {
+        case .success:
+            // printInfo(message: "Data sent: \(data.count)")
+            break
+        case .failure(let error):
+            printInfo(message: "Sending failed.")
+            print(error.localizedDescription)
+        }
+    }
+    
     func readTCP() {
         guard let client = client else { return }
         guard let response = client.read(1024*10) else { return }
@@ -296,9 +336,11 @@ struct Home : View {
         // install a tap on the audio engine and specify buffer size and input format
         audioEngine.inputNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(bufferSize), format: inputFormat) { (buffer, time) in
             
-            let actualBufferSize = Int(buffer.frameLength)
-            printInfo(message: "Actual buffer size: \(actualBufferSize)")
-            printInfo(message: "Designed buffer size: \(bufferSize)")
+            if !connectedFlag {
+                let actualBufferSize = Int(buffer.frameLength)
+                printInfo(message: "Actual buffer size: \(actualBufferSize)")
+                printInfo(message: "Designed buffer size: \(bufferSize)")
+            }
             
             self.conversionQueue.async {
                 
@@ -307,8 +349,8 @@ struct Home : View {
                 // of microphone data until you stop() AVAudioEngine
                 
                 let actualBufferSize = Int(buffer.frameLength)
-                print("    Actual buffer size: \(actualBufferSize)")
-                print("    Designed buffer size: \(bufferSize)")
+                // print("    Actual buffer size: \(actualBufferSize)")
+                // print("    Designed buffer size: \(bufferSize)")
                 
                 // print all data to the console
                 // buffer.floatChannelData?.pointee[n] has the data for point n
@@ -321,14 +363,6 @@ struct Home : View {
                 // }
                 // print(" ")
                 
-//                let data = Data(buffer: UnsafeBufferPointer(start: buffer.int16ChannelData, count: Int(buffer.frameLength)))
-//                guard let client = client else { return }
-//                switch client.send(data: data) {
-//                case .success:
-//                    printInfo(message: "Data sent successfully.")
-//                case .failure(let error):
-//                    printInfo(message: "Sending failed." + String(describing: error))
-//                }
                 
                 // another tutorial: https://www.jianshu.com/p/9cb0914d4fed
                 // on how to deal with "Wireless Data" permission prompt missing:
@@ -358,30 +392,11 @@ struct Home : View {
                 } else {
                     // \r is "Carriage Return" (CR, ASCII character 13), \n is "Line Feed" (LF, ASCII character 10)
                     let terminator = [UInt8]("\r\n".utf8)
-                    
                     let data = toData(PCMBuffer: pcmBuffer!)
                     
-                    // var data = toData(PCMBuffer: pcmBuffer!)
-                    // withUnsafeBytes(of: terminator) { data.append(contentsOf: $0) }
-
-                    // let data = bufferData.append(contentsOf: terminator)
-                    
                     // send data
-                    guard let client = client else { return }
-                    switch client.send(data: data) {
-                    case .success:
-                        printInfo(message: "Data sent: \(data.count)")
-                    case .failure(let error):
-                        printInfo(message: "Sending failed.")
-                        print(error.localizedDescription)
-                    }
-                    switch client.send(data: terminator) {
-                    case .success:
-                        printInfo(message: "Data sent: \(terminator.count)")
-                    case .failure(let error):
-                        printInfo(message: "Sending failed.")
-                        print(error.localizedDescription)
-                    }
+                    sendTCP(data: data)
+                    sendTCP(data: terminator)
 
                 }
                 
@@ -420,7 +435,7 @@ struct Home : View {
     }
     
     func initPlayer() {
-        let sound = Bundle.main.path(forResource: "linear_chirp_500_4410_x100", ofType: "wav")
+        let sound = Bundle.main.path(forResource: "linear_chirp_500_4800_x100", ofType: "wav")
         self.audioPlayer = try! AVAudioPlayer(contentsOf: URL(fileURLWithPath: sound!))
         self.audioPlayer.numberOfLoops = -1
         self.audioPlayer.prepareToPlay()

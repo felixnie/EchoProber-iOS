@@ -1,5 +1,9 @@
 # EchoProber-iOS
 
+iOS client for real-time audio playback and recording using SwiftUI and SwiftSocket.
+
+Please open via EchoProber.xcworkspace.
+
 https://raw.githubusercontent.com/felixnie/img/master/EchoProber-iOS.MP4
 
 
