@@ -36,6 +36,9 @@ struct Home : View {
     let sampleRate = 44100
     let bufferSize = 4800 // may differ from actual sample count
     
+    // for offline recorder
+    @State var audioRecorder : AVAudioRecorder!
+    
     // for player
     @State var audioPlayer : AVAudioPlayer!
     
@@ -106,7 +109,7 @@ struct Home : View {
                     Text("TEXT")
                         .font(.headline)
                         .bold()
-                    TextField("Text Message", text: $messageTextField)
+                    TextField("Text Message / File Name", text: $messageTextField)
                         .textFieldStyle(.roundedBorder)
                     Button("Send", action: {
                         sendTCP()
@@ -141,12 +144,12 @@ struct Home : View {
                 Button(action: {
                     
                     // button behavior
-                    if playingFlag { // stop actions
+                    if playingFlag && connectedFlag{ // stop actions for online mode
                         self.stopRecorder()
                         self.stopPlayer()
                         printInfo(message: "Stopped.")
                         self.playingFlag.toggle()
-                    } else {
+                    } else if !playingFlag && connectedFlag{ // start actions for online mode
                         self.startRecorder()
                         self.startPlayer()
                         
@@ -154,7 +157,19 @@ struct Home : View {
                         let terminator = [UInt8]("\r\n".utf8)
                         sendTCP(data: terminator)
                         
-                        printInfo(message: "Started.")
+                        printInfo(message: "Started in online mode.")
+                        self.playingFlag.toggle()
+                    } else if playingFlag && !connectedFlag{ // start actions for offline mode
+                        self.stopOfflineRecorder()
+                        self.stopPlayer()
+                        
+                        printInfo(message: "Stopped.")
+                        self.playingFlag.toggle()
+                    } else if !playingFlag && !connectedFlag{
+                        self.startOfflineRecorder()
+                        self.startPlayer()
+                        
+                        printInfo(message: "Started in offline mode.")
                         self.playingFlag.toggle()
                     }
                     
@@ -177,7 +192,7 @@ struct Home : View {
                             .frame(width: 70, height: 70)
                     }
                     
-                }.disabled(!connectedFlag)
+                }
                 
                 Spacer()
                     .frame(height: 20)
@@ -323,7 +338,11 @@ struct Home : View {
     func readTCP() {
         guard let client = client else { return }
         guard let response = client.read(1024*10) else { return }
-        printInfo(message: String(bytes: response, encoding: .utf8)!) // unwrapped
+        if response.count < 100 {
+            printInfo(message: "Text received: " + String(bytes: response, encoding: .utf8)!) // unwrapped
+        } else {
+            printInfo(message: "Text received: \(response.count) characters.") // unwrapped
+        }
     }
     
     func initRecorder() {
@@ -336,11 +355,11 @@ struct Home : View {
         // install a tap on the audio engine and specify buffer size and input format
         audioEngine.inputNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(bufferSize), format: inputFormat) { (buffer, time) in
             
-            if !connectedFlag {
-                let actualBufferSize = Int(buffer.frameLength)
-                printInfo(message: "Actual buffer size: \(actualBufferSize)")
-                printInfo(message: "Designed buffer size: \(bufferSize)")
-            }
+//            if debugMode {
+//                let actualBufferSize = Int(buffer.frameLength)
+//                printInfo(message: "Actual buffer size: \(actualBufferSize)")
+//                printInfo(message: "Designed buffer size: \(bufferSize)")
+//            }
             
             self.conversionQueue.async {
                 
@@ -349,8 +368,6 @@ struct Home : View {
                 // of microphone data until you stop() AVAudioEngine
                 
                 let actualBufferSize = Int(buffer.frameLength)
-                // print("    Actual buffer size: \(actualBufferSize)")
-                // print("    Designed buffer size: \(bufferSize)")
                 
                 // print all data to the console
                 // buffer.floatChannelData?.pointee[n] has the data for point n
@@ -384,8 +401,7 @@ struct Home : View {
                 formatConverter.convert(to: pcmBuffer!, error: &error, withInputFrom: inputBlock)
                 
                 // for debug. pcmBuffer = 2 * bufferSize. time interval should be 0.1s
-                // printInfo(message: "\(String(describing: pcmBuffer)) \(Date().timeIntervalSince1970)")
-                printInfo(message: "\(Date().timeIntervalSince1970)")
+                // printInfo(message: "\(Date().timeIntervalSince1970)")
 
                 if error != nil {
                     print(error!.localizedDescription)
@@ -399,21 +415,6 @@ struct Home : View {
                     sendTCP(data: terminator)
 
                 }
-                
-//                else if let channelData = pcmBuffer!.int16ChannelData {
-//
-//                    let channelDataValue = channelData.pointee
-//                    let channelDataValueArray = stride(from: 0,
-//                                                       to: Int(pcmBuffer!.frameLength),
-//                                                       by: buffer.stride).map{ channelDataValue[$0] }
-//
-//                    // Converted pcm 16 values are delegated to the controller.
-//                    // self.delegate?.didOutput(channelData: channelDataValueArray)
-//                    print("count of channelDataValueArray is \(channelDataValueArray.count)")
-//                    print("value of channelDataValue is \(channelDataValue)")
-//                    print("value of Int(pcmBuffer!.frameLength) is \(Int(pcmBuffer!.frameLength))")
-//                    printDate()
-//                }
             }
         }
         audioEngine.prepare()
@@ -447,6 +448,45 @@ struct Home : View {
     
     func stopPlayer() {
         self.audioPlayer.pause()
+    }
+    
+    func startOfflineRecorder() {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        let fileURL : URL
+        
+        if messageTextField.isEmpty {
+            let date = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM-dd-HH-mm-ss"
+            let time = formatter.string(from: date)
+            
+            fileURL = url.appendingPathComponent("\(time).m4a.")
+            printInfo(message: "No file name. Use timestamp instead.")
+            printInfo(message: "File name: \(time).m4a")
+        } else {
+            fileURL = url.appendingPathComponent("\(messageTextField).m4a")
+            printInfo(message: "File name: \(messageTextField).m4a")
+        }
+        
+        
+        
+        let settings = [
+            AVFormatIDKey : Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey : sampleRate,
+            AVNumberOfChannelsKey : 1,
+            AVEncoderAudioQualityKey : AVAudioQuality.high.rawValue
+        ]
+        do {
+            self.audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
+            self.audioRecorder.record()
+        } catch {
+            print(error.localizedDescription)
+        }
+    }
+    
+    func stopOfflineRecorder() {
+        self.audioRecorder.stop()
     }
     
     func printDate() {
