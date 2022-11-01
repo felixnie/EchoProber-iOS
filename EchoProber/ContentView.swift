@@ -8,6 +8,8 @@
 import SwiftUI
 import AVKit
 import SwiftSocket
+import CoreMotion
+
 
 struct ContentView: View {
     var body: some View {
@@ -24,38 +26,55 @@ struct ContentView_Previews: PreviewProvider {
 
 
 struct Home : View {
+    // MARK: global variables
     // for system
     @State var infoText = ""
-    @State var playingFlag = false
-    @State var alertFlag = false
+    @State var isPlaying = false
+    @State var willAlert = false
     @State var audioSession : AVAudioSession!
+    @State var client : TCPClient?
     
     // for recorder
     var audioEngine : AVAudioEngine = AVAudioEngine()
     let conversionQueue = DispatchQueue(label: "conversionQueue")
     let sampleRate = 44100
-    let bufferSize = 4800 // may differ from actual sample count
+    let bufferSize = 1600 // may differ from actual sample count
     
     // for offline recorder
     @State var audioRecorder : AVAudioRecorder!
     
     // for player
     @State var audioPlayer : AVAudioPlayer!
+    @State var wavLeft : [Float] = [0.0] // float sound array for left channel
+    @State var wavRight : [Float] = [0.0] // float sound array for right channel
+    @State var wavUpdated = false
     
     // for socket
-    @AppStorage("host") var hostTextField = "155.69.142.8"
-    @AppStorage("port") var portTextField = "8170"
+    @AppStorage("host") var hostTextField = "155.69.142.149"
+    @AppStorage("port") var portTextField = "8173"
     @State var connectedFlag = false
     @State var messageTextField = ""
     
-    @State var client : TCPClient?
+    // for auto-stop timer
+    // @State var timer : DispatchSourceTimer! // unused
+    @State var pressStop : DispatchWorkItem!
+    @State var isTiming = false // if a task is scheduled
+    
+    // for motion
+    let motionManager = CMMotionManager()
+    let motionQueue = OperationQueue()
+    @State var pitch : [Double] = []
+    @State var yaw : [Double] = []
+    @State var roll : [Double] = []
+    @State var wasPlaying = false
+    
     
     var body: some View {
         
         NavigationView {
             
             VStack {
-                
+                // MARK: host and port
                 HStack() {
                     Text("HOST")
                         .font(.headline)
@@ -86,12 +105,12 @@ struct Home : View {
                     Button("Disconnect", action: {
                         
                         
-                        if playingFlag {
+                        if isPlaying {
                             // same as the actions of pressing stop button
-                            self.stopRecorder()
-                            self.stopPlayer()
+                            stopRecorder()
+                            stopPlayer()
                             printInfo(message: "Stopped.")
-                            self.playingFlag.toggle()
+                            isPlaying.toggle()
                         }
                         
                         // release connection
@@ -104,7 +123,7 @@ struct Home : View {
                 .buttonStyle(.bordered)
                 .padding(.horizontal)
                 
-                // MARK: send text
+                // MARK: message and log text
                 HStack() {
                     Text("TEXT")
                         .font(.headline)
@@ -112,7 +131,7 @@ struct Home : View {
                     TextField("Text Message / File Name", text: $messageTextField)
                         .textFieldStyle(.roundedBorder)
                     Button("Send", action: {
-                        sendTCP()
+                        sendTCP(message: messageTextField)
                     })
                     .buttonStyle(.bordered)
                     .disabled(!connectedFlag)
@@ -125,7 +144,7 @@ struct Home : View {
                     .padding(.horizontal)
                 
                 ScrollView {
-                Text(self.infoText)
+                Text(infoText)
                     .font(.system(size: 14, design: .monospaced))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     
@@ -140,47 +159,44 @@ struct Home : View {
                 Spacer()
                     .frame(height: 20)
                 
-                // MARK: play button
+                // MARK: play button actions
                 Button(action: {
                     
                     // button behavior
-                    if playingFlag && connectedFlag{ // stop actions for online mode
-                        self.stopRecorder()
-                        self.stopPlayer()
-                        printInfo(message: "Stopped.")
-                        self.playingFlag.toggle()
-                    } else if !playingFlag && connectedFlag{ // start actions for online mode
-                        self.startRecorder()
-                        self.startPlayer()
+                    if isPlaying && connectedFlag{ // stop actions for online mode
+                        stopRecorder()
+                        stopPlayer()
                         
+                        printInfo(message: "Stopped.")
+                        isPlaying.toggle()
+                    } else if !isPlaying && connectedFlag{ // start actions for online mode
+                        startRecorder()
+                        startPlayer()
                         sendTCP(message: "Start playing.") // tell server to reset arrays
-                        let terminator = [UInt8]("\r\n".utf8)
-                        sendTCP(data: terminator)
-                        
                         printInfo(message: "Started in online mode.")
-                        self.playingFlag.toggle()
-                    } else if playingFlag && !connectedFlag{ // start actions for offline mode
-                        self.stopOfflineRecorder()
-                        self.stopPlayer()
-                        
+                        isPlaying.toggle()
+                    } else if isPlaying && !connectedFlag{ // stop actions for offline mode
+                        stopOfflineRecorder()
+                        stopOfflineTimer()
+                        saveMotionData()
+                        stopPlayer()
                         printInfo(message: "Stopped.")
-                        self.playingFlag.toggle()
-                    } else if !playingFlag && !connectedFlag{
-                        self.startOfflineRecorder()
-                        self.startPlayer()
-                        
+                        isPlaying.toggle()
+                    } else if !isPlaying && !connectedFlag{ // start actions for offline mode
+                        startOfflineRecorder()
+                        startOfflineTimer()
+                        startPlayer()
                         printInfo(message: "Started in offline mode.")
-                        self.playingFlag.toggle()
+                        isPlaying.toggle()
                     }
-                    
                 }) {
                     // button style
-                    if connectedFlag && playingFlag { // stop actions
+                    if connectedFlag && isPlaying { // stop actions
                         Circle()
                             .strokeBorder(Color.white, lineWidth: 6)
                             .background(Circle().foregroundColor(Color.red))
                             .frame(width: 70, height: 70)
-                    } else if connectedFlag && !playingFlag {
+                    } else if connectedFlag && !isPlaying {
                         Circle()
                             .strokeBorder(Color.white, lineWidth: 6)
                             .background(Circle().foregroundColor(Color.green))
@@ -199,7 +215,7 @@ struct Home : View {
             }
             .navigationBarTitle("EchoProber")
         }
-        .alert("Missing Permission", isPresented: self.$alertFlag, actions: {
+        .alert("Missing Permission", isPresented: $willAlert, actions: {
             Button("Close") {
                 exit(0)
             }
@@ -207,31 +223,30 @@ struct Home : View {
             Text("Please enable microphone access in Settings.")
         })
         .onAppear {
-            
+            // MARK: intialization
             do{
-                // MARK: intialization
                 printInfo(message: "Hello, echo boys.")
-                self.audioSession = AVAudioSession.sharedInstance()
-                try self.audioSession.setCategory(.playAndRecord, mode: .default, policy: .default, options: .defaultToSpeaker)
+                audioSession = AVAudioSession.sharedInstance()
+                try audioSession.setCategory(.playAndRecord, mode: .default, policy: .default, options: .defaultToSpeaker)
                 
-                // request audio permission
+                // MARK: audio permission
                 // for this we require microphone usage description in info.plist
                 printInfo(message: "Request audio permission.")
-                self.audioSession.requestRecordPermission { (status) in
+                audioSession.requestRecordPermission { (status) in
                     if !status{
                         // alert
                         printInfo(message: "Audio permission missing.")
-                        self.alertFlag.toggle()
+                        willAlert.toggle()
                     }
                     else{
                         // if permission granted, initialize recorder and paper
                         printInfo(message: "Audio permission granted.")
-                        // self.getAudios()
-                        self.initRecorder()
-                        self.initPlayer()
+                        initRecorder()
+                        initPlayer()
                     }
                 }
                 
+                // MARK: wlan permission
                 // trigger wireless data permission prompt
                 client = TCPClient(address: "apple.com", port: 80)
                 guard let client = client else { return }
@@ -243,15 +258,52 @@ struct Home : View {
                     printInfo(message: "Internet permission missing.")
                     print(error.localizedDescription)
                 }
+                
+                // MARK: motion queue
+                motionManager.startDeviceMotionUpdates(to: motionQueue) { (data: CMDeviceMotion?, error: Error?) in
+                    guard let data = data else {
+                        print("Error: \(error!)")
+                        return
+                    }
+
+                    let motion: CMAttitude = data.attitude
+                    motionManager.deviceMotionUpdateInterval = 0.01
+
+                    DispatchQueue.main.async {
+                        if isPlaying {
+                            pitch.append(motion.pitch / Double.pi * 180)
+                            yaw.append(motion.yaw / Double.pi * 180)
+                            roll.append(motion.roll / Double.pi * 180)
+                            
+                            // debug
+                            // print(motion.pitch / Double.pi * 180)
+                            // print(motion.yaw / Double.pi * 180)
+                            // print(motion.roll / Double.pi * 180)
+                        }
+                        
+                        if isPlaying && !wasPlaying {
+                            // debug
+                            print("start motion recorder")
+                            printDate()
+                            wasPlaying.toggle()
+                        }
+                        
+                        if !isPlaying && wasPlaying {
+                            // debug
+                            print("stop motion recorder")
+                            printDate()
+                            wasPlaying.toggle()
+                        }
+                    }
+                }
             }
             catch{
-                
                 print(error.localizedDescription)
-                
             }
         }
     }
     
+    // MARK: connectTCP
     func connectTCP() {
         let host = hostTextField
         guard let port = Int32(portTextField) else {return}
@@ -284,11 +336,13 @@ struct Home : View {
         }
     }
     
+    // MARK: disconnectTCP
     func disconnectTCP() {
         guard let client = client else { return }
         client.close()
     }
     
+    // MARK: sendTCP messageTextField
     func sendTCP() {
         guard let client = client else { return }
         switch client.send(string: messageTextField) {
@@ -300,7 +354,8 @@ struct Home : View {
         }
     }
     
-    func sendTCP(message: String) {
+    // MARK: sendTCP String
+    func sendTCP(message: String) { // used to send strings
         guard let client = client else { return }
         switch client.send(string: message) {
         case .success:
@@ -309,9 +364,27 @@ struct Home : View {
             printInfo(message: "Sending failed.")
             print(error.localizedDescription)
         }
+        let terminator = [UInt8]("\r\n".utf8)
+        sendTCP(data: terminator) // send terminator
     }
     
-    func sendTCP(data: Data) {
+    // MARK: sendTCP Data
+    func sendTCP(data: Data) { // used to send Data
+        guard let client = client else { return }
+        switch client.send(data: data) {
+        case .success:
+            // printInfo(message: "Data sent: \(data.count)")
+            break
+        case .failure(let error):
+            printInfo(message: "Sending failed.")
+            print(error.localizedDescription)
+        }
+        let terminator = [UInt8]("\r\n".utf8)
+        sendTCP(data: terminator) // send terminator
+    }
+    
+    // MARK: sendTCP [UInt8]
+    func sendTCP(data: [UInt8]) { // used to send terminator
         guard let client = client else { return }
         switch client.send(data: data) {
         case .success:
@@ -323,47 +396,38 @@ struct Home : View {
         }
     }
     
-    func sendTCP(data: [UInt8]) {
-        guard let client = client else { return }
-        switch client.send(data: data) {
-        case .success:
-            // printInfo(message: "Data sent: \(data.count)")
-            break
-        case .failure(let error):
-            printInfo(message: "Sending failed.")
-            print(error.localizedDescription)
-        }
-    }
-    
+    // MARK: readTCP
     func readTCP() {
         guard let client = client else { return }
         guard let response = client.read(1024*10) else { return }
         if response.count < 100 {
             printInfo(message: "Text received: " + String(bytes: response, encoding: .utf8)!) // unwrapped
         } else {
-            printInfo(message: "Text received: \(response.count) characters.") // unwrapped
+            printInfo(message: "Data received: \(response.count) characters.")
+            
         }
     }
     
+    // MARK: initRecorder
     func initRecorder() {
         print("Entered initRecorder")
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
-        let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(sampleRate), channels: 1, interleaved: false) // output sample rate remains the same
+        let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(sampleRate), channels: 2, interleaved: true) // output sample rate remains the same
         guard let formatConverter =  AVAudioConverter(from: inputFormat, to: outputFormat!) else { return }
         
         // install a tap on the audio engine and specify buffer size and input format
         audioEngine.inputNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(bufferSize), format: inputFormat) { (buffer, time) in
             
-//            if debugMode {
-//                let actualBufferSize = Int(buffer.frameLength)
-//                printInfo(message: "Actual buffer size: \(actualBufferSize)")
-//                printInfo(message: "Designed buffer size: \(bufferSize)")
-//            }
+            if true {
+                let actualBufferSize = Int(buffer.frameLength)
+                printInfo(message: "Actual buffer size: \(actualBufferSize)")
+                printInfo(message: "Designed buffer size: \(bufferSize)")
+            }
             
-            self.conversionQueue.async {
+            conversionQueue.async {
                 
-                // MARK: audio data thread
+                // MARK: audioEngine thread
                 // This block will be called over and over for successive buffers
                 // of microphone data until you stop() AVAudioEngine
                 
@@ -406,20 +470,15 @@ struct Home : View {
                 if error != nil {
                     print(error!.localizedDescription)
                 } else {
-                    // \r is "Carriage Return" (CR, ASCII character 13), \n is "Line Feed" (LF, ASCII character 10)
-                    let terminator = [UInt8]("\r\n".utf8)
-                    let data = toData(PCMBuffer: pcmBuffer!)
-                    
-                    // send data
+                    let data = PCMBufferToData(PCMBuffer: pcmBuffer!)
                     sendTCP(data: data)
-                    sendTCP(data: terminator)
-
                 }
             }
         }
         audioEngine.prepare()
     }
     
+    // MARK: startRecorder
     func startRecorder() {
         print("Entered startRecorder")
         do {
@@ -428,145 +487,325 @@ struct Home : View {
         catch {
             print(error.localizedDescription)
         }
+
     }
     
+    // MARK: stopRecorder
     func stopRecorder() {
         print("Entered stopRecorder")
         audioEngine.stop()
     }
     
+    // MARK: initPlayer
     func initPlayer() {
-        let sound = Bundle.main.path(forResource: "linear_chirp_500_4800_x100", ofType: "wav")
-        self.audioPlayer = try! AVAudioPlayer(contentsOf: URL(fileURLWithPath: sound!))
-        self.audioPlayer.numberOfLoops = -1
-        self.audioPlayer.prepareToPlay()
+        // read from wav in file
+        // let sound = Bundle.main.path(forResource: "linear_chirp_100_4800_x100_hamming", ofType: "wav")
+        // audioPlayer = try! AVAudioPlayer(contentsOf: URL(fileURLWithPath: sound!))
+        
+        // read from wav in buffer
+        let duration = 1600
+        let nRepeats = 100
+        let wavLeft = generateTone(tone_len: 100, duration: duration, repeat_num: nRepeats, f: 14000)
+        let wavRight = generateChirp(chirp_len: 100, duration: duration, repeat_num: nRepeats, f0: 15000, f1: 22000)
+        let wavData = generateStereoData(wavLeft: wavLeft, wavRight: wavRight, volLeft: 1.0, volRight: 1.0, duration: duration, nRepeats: nRepeats)
+        
+        let fileTypeString = String(AVFileType.wav.rawValue)
+        audioPlayer = try! AVAudioPlayer(data: wavData, fileTypeHint: fileTypeString)
+        
+        printInfo(message: "[Debug] Player channels: \(audioPlayer.numberOfChannels)")
+        audioPlayer.numberOfLoops = -1
+        audioPlayer.prepareToPlay()
     }
     
+    // MARK: startPlayer
     func startPlayer() {
-        self.audioPlayer.play()
+        // DEBUG
+        // initPlayer()
+        audioPlayer.play()
     }
     
+    // MARK: stopPlayer
     func stopPlayer() {
-        self.audioPlayer.pause()
+        audioPlayer.pause()
     }
     
+    // MARK: startOfflineRecorder (stereo)
     func startOfflineRecorder() {
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
         let fileURL : URL
         
-        if messageTextField.isEmpty {
+        if messageTextField.isEmpty || messageTextField.starts(with: "temp") {
             let date = Date()
             let formatter = DateFormatter()
-            formatter.dateFormat = "MM-dd-HH-mm-ss"
+            formatter.dateFormat = "MMdd_HHmmss"
             let time = formatter.string(from: date)
             
-            fileURL = url.appendingPathComponent("\(time).m4a.")
+            messageTextField = "temp_\(time)"
             printInfo(message: "No file name. Use timestamp instead.")
-            printInfo(message: "File name: \(time).m4a")
-        } else {
-            fileURL = url.appendingPathComponent("\(messageTextField).m4a")
-            printInfo(message: "File name: \(messageTextField).m4a")
         }
-        
-        
-        
+
+        fileURL = url.appendingPathComponent("\(messageTextField).pcm")
+        printInfo(message: "File name: \(messageTextField).pcm")
+
         let settings = [
-            AVFormatIDKey : Int(kAudioFormatMPEG4AAC),
+            AVFormatIDKey : Int(kAudioFormatLinearPCM), // kAudioFormatMPEG4AAC for m4a
             AVSampleRateKey : sampleRate,
-            AVNumberOfChannelsKey : 1,
+            AVNumberOfChannelsKey : 2,
             AVEncoderAudioQualityKey : AVAudioQuality.high.rawValue
         ]
         do {
-            self.audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
-            self.audioRecorder.record()
+            audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
+            audioRecorder.record()
+            // debug
+            print("start offline recorder")
+            printDate()
         } catch {
             print(error.localizedDescription)
         }
     }
     
+    // MARK: stopOfflineRecorder
     func stopOfflineRecorder() {
-        self.audioRecorder.stop()
+        audioRecorder.stop()
+        // debug
+        print("stop offline recorder")
+        printDate()
     }
     
+    // MARK: startOfflineTimer
+    func startOfflineTimer() {
+        // if name matches
+        if messageTextField.hasPrefix("train") || messageTextField.hasPrefix("test") {
+            // set timer callback functions
+            pressStop = DispatchWorkItem(block: {
+                if isPlaying {
+                    stopOfflineRecorder()
+                    saveMotionData()
+                    stopPlayer()
+                    printInfo(message: "Stopped.")
+                    isPlaying.toggle()
+                    if isTiming { // cancel scheduled task
+                        pressStop.cancel()
+                        pressStop = nil
+                        isTiming = false
+                    }
+                }
+            })
+            DispatchQueue.main.asyncAfter(deadline: .now() + (messageTextField.hasPrefix("train") ? 120 : 60), execute: pressStop)
+            isTiming = true
+        }
+    }
+    
+    // MARK: stopOfflineTimer
+    func stopOfflineTimer() {
+        if isTiming { // cancel scheduled task
+            pressStop.cancel()
+            pressStop = nil
+            isTiming = false
+        }
+    }
+    
+    // MARK: saveMotionData
+    func saveMotionData() {
+        // create csv
+        var csvString = "pitch,yaw,roll\n"
+        for i in 0..<pitch.count {
+            let dataString = String(format: "%f,%f,%f\n", pitch[i], yaw[i], roll[i])
+            csvString = csvString.appending(dataString)
+        }
+
+        // save csv
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileURL : URL
+        do {
+            fileURL = url.appendingPathComponent("\(messageTextField).csv")
+            try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            print("error creating file")
+        }
+        
+        pitch = []
+        yaw = []
+        roll = []
+    }
+        
+    // MARK: printDate
     func printDate() {
         let date = Date()
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSSS"
+        formatter.dateFormat = "HH:mm:ss.SSS"
         print("Time now: " + formatter.string(from: date))
     }
-    
-    func generateSound() -> Array<Double> {
-        /*
-        fs = 44100;
-        t = 1/fs:1/fs:500/fs;
-        f0 = 15000;
-        t1 = 500/fs;
-        f1 = 20000;
-        linear_chirp = chirp(t, f0, t1, f1);
-
-        p = 1;
-        phi = 0;
-        beta = (f1-f0).*(t1.^(-p));
-        yvalue = cos(2*pi*(beta./(1+p)*(t.^(1+p))+f0*t+phi/360));
-        */
-        let fs = 44100.0
-        let phi = 0.0 // phase
-        let t = Array(stride(from: 1.0 / fs, through: 500.0 / fs, by: 1.0 / fs))
-        let f0 = 15000.0;
-        let t1 = 500.0 / fs;
-        let f1 = 20000.0;
-        var sound = [Double](repeating: 0.0, count: 4410)
         
-        for i in 0..<t.count {
-            let beta = (f1-f0) / t1
-            sound[i] = cos(2 * Double.pi * (beta / 2 * t[i] * t[i] + f0 * t[i] + phi / 360.0))
-        }
-        
-        return sound
-    }
-    
+    // MARK: printInfo
     func printInfo(message: String) {
-        let showTime = true
         let date = Date()
         let formatter = DateFormatter()
-        formatter.dateFormat = "mm:ss"
+        formatter.dateFormat = "[HH:mm:ss]"
         let time = formatter.string(from: date)
         
-        if(showTime) {
-            self.infoText = time + " " + message + "\n" + self.infoText
-        } else{
-            self.infoText = message + "\n" + self.infoText
-        }
-        
+        infoText = time + " " + message + "\n" + infoText
     }
     
-    func toNSData(PCMBuffer: AVAudioPCMBuffer) -> NSData { // convert AVAudioPCMBuffer to NSData
-        let channelCount = 1  // given PCMBuffer channel count is 1
-        let channels = UnsafeBufferPointer(start: PCMBuffer.int16ChannelData, count: channelCount)
-        let ch0Data = NSData(bytes: channels[0], length:Int(PCMBuffer.frameCapacity * PCMBuffer.format.streamDescription.pointee.mBytesPerFrame))
-        return ch0Data
-    }
-    
-    func toData(PCMBuffer: AVAudioPCMBuffer) -> Data { // convert AVAudioPCMBuffer to Data
+    // MARK: PCM
+    func PCMBufferToData(PCMBuffer: AVAudioPCMBuffer) -> Data { // convert AVAudioPCMBuffer to Data
         let channelCount = 1  // given PCMBuffer channel count is 1
         let channels = UnsafeBufferPointer(start: PCMBuffer.int16ChannelData, count: channelCount)
         let ch0Data = Data(bytes: channels[0], count:Int(PCMBuffer.frameCapacity * PCMBuffer.format.streamDescription.pointee.mBytesPerFrame))
         return ch0Data
     }
     
-}
+    // MARK: generateChirp
+    func generateChirp(chirp_len: Int, duration: Int, repeat_num: Int, f0: Double, f1: Double) -> Array<Double> {
+        let fs = 44100.0
+        let t1 = Double(chirp_len) / fs;
+        let t = Array(stride(from: 1.0 / fs, through: t1, by: 1.0 / fs))
+        let phi = 0.0 / 360.0 // initial phase
+        // generate chirp
+        var chirp = [Double](repeating: 0.0, count: duration)
+        for i in 0 ..< chirp_len {
+            let beta = (f1-f0) / t1
+            let phase = beta / 2 * t[i] * t[i] + f0 * t[i] + phi
+            chirp[i] = cos(2 * Double.pi * phase)
+        }
+        // window chirp
+        let hann = Hann(len: chirp_len)
+        for i in 0 ..< chirp_len {
+            chirp[i] = chirp[i] * hann[i]
+        }
+        // repeat chirp
+        var chirpRepeat = [Double](repeating: 0.0, count: duration * repeat_num)
+        for i in 0 ..< duration * repeat_num {
+            chirpRepeat[i] = chirp[i % duration]
+        }
 
-extension Data { // convert array to Data
-
-    init<T>(fromArray values: [T]) {
-        self = values.withUnsafeBytes { Data($0) }
+        return chirpRepeat
     }
+        
+    // MARK: generateTone
+    func generateTone(tone_len: Int, duration: Int, repeat_num: Int, f: Double) -> Array<Double> {
+        let fs = 44100.0
+        let t1 = Double(tone_len) / fs
+        let t = Array(stride(from: 1.0 / fs, through: t1, by: 1.0 / fs))
+        // generate tone
+        var tone = [Double](repeating: 0.0, count: duration)
+        for i in 0 ..< tone_len {
+            let phase = f * t[i]
+            tone[i] = cos(2 * Double.pi * phase)
+        }
+        // repeat tone
+        var toneRepeat = [Double](repeating: 0.0, count: duration * repeat_num)
+        for i in 0 ..< duration * repeat_num {
+            toneRepeat[i] = tone[i % duration]
+        }
 
-    func toArray<T>(type: T.Type) -> [T] where T: ExpressibleByIntegerLiteral {
-        var array = Array<T>(repeating: 0, count: self.count/MemoryLayout<T>.stride)
-        _ = array.withUnsafeMutableBytes { copyBytes(to: $0) }
-        return array
+        return toneRepeat
     }
-}
+    
+    // MARK: Hann window
+    func Hann(len: Int) -> Array<Double> {
+        var window = [Double](repeating: 0.0, count: len)
+        let half_len = (len % 2 == 0) ? (len / 2) : (len + 1 / 2)
+        let half_window = Hann(half_len: half_len, full_len: len)
+        
+        for i in 0 ..< half_len {
+            window[i] = half_window[i]
+            window[len-i-1] = half_window[i]
+        }
+        
+        return window
+    }
+    
+    func Hann(half_len: Int, full_len: Int) -> Array<Double> {
+        let m = Double(half_len)
+        let n = Double(full_len) // same as gencoswin in MATLAB
+        let t = Array(stride(from: 0.0, through: (m-1) / (n-1), by: 1.0 / (n-1)))
+        var half_window = [Double](repeating: 0.0, count: half_len)
+        for i in 0 ..< half_len {
+            half_window[i] = 0.5 - 0.5 * cos(2 * Double.pi * t[i])
+        }
+        return half_window
+    }
+    
+    // MARK: wavHeader44
+    var wavHeader44 : [UInt8] = [
+        0x52, 0x49, 0x46, 0x46, // “RIFF”
+        // 0x24, 0xa6, 0x0e, 0x00, // if mono and duration is 4800: file size, little endian, 0x0ea624 = 960036 bytes = 960000/2 mono samples + 36 header
+        // 0x24, 0x4c, 0x1d, 0x00, // if stereo and duration is 4800: 0x1d4c24 = 1920036 = 1920000/2 stereo samples + 36 holder (4800 chirp * 100 times)
+        0x24, 0xc4, 0x09, 0x00, // if stereo and duration is 1600: 0x09c424 = 640036 = 640000/2 stereo samples + 36 holder (1600 chirp * 100 times)
+        0x57, 0x41, 0x56, 0x45, // "WAVE"
+        0x66, 0x6d, 0x74, 0x20, // "fmt "
+        0x10, 0x00, 0x00, 0x00, // length of format data before, 0x10 = 16
+        0x01, 0x00, 0x02, 0x00, // offset to data, 01 = PCM, 02 = stereo
+        0x44, 0xac, 0x00, 0x00, // sample rate: 0x00ac44 = 44.1k
+        0x88, 0x58, 0x01, 0x00, // bytes per second: 0x015888 = 88.2k (stereo)
+        // 0x80, 0xbb, 0x00, 0x00, // 0x00bb80 = 48k
+        // 0x00, 0xee, 0x02, 0x00, // 0x02ee00 = 192k
+        0x04, 0x00, 0x10, 0x00, // 0x04 = 4 bytes (bits per sample * channels), 0x10 = 16 bits per sample (2 Int16 samples)
+        0x64, 0x61, 0x74, 0x61, // "data" chunk header
+        // 0x00, 0x4c, 0x1d, 0x00  // if stereo and duration is 4800: size of data section, 0x1d4c00 = 1920000 as number of samples
+        0x00, 0xc4, 0x09, 0x00  // if stereo and duration is 1600: size of data section, 0x09c400 = 640000 as number of samples
+        // followed by sample data
+    ]
+    
+    typealias Byte = UInt8
+    
+    // MARK: int16ToBytes
+    func int16ToBytes(_ value: Int16, byteArray : inout [Byte], index : Int) {
+        let uintVal = UInt(bitPattern: Int(value))
+        byteArray[index + 0] = UInt8(uintVal         & 0x000000ff)
+        byteArray[index + 1] = UInt8((uintVal >>  8) & 0x000000ff)
+    }
+    
+    // MARK: int32ToBytes
+    func int32ToBytes(_ value: Int32, byteArray : inout [Byte], index : Int) {
+        let uintVal = UInt(bitPattern: Int(value))
+        byteArray[index + 0] = UInt8(uintVal         & 0x000000ff)
+        byteArray[index + 1] = UInt8((uintVal >>  8) & 0x000000ff)
+        byteArray[index + 2] = UInt8((uintVal >> 16) & 0x000000ff)
+        byteArray[index + 3] = UInt8((uintVal >> 24) & 0x000000ff)
+    }
+    
+    // MARK: generateStereoData
+    func generateStereoData(wavLeft: [Double], wavRight: [Double], volLeft: Double, volRight: Double, duration: Int, nRepeats: Int) -> Data {
+        let volumeLeft = volLeft * 32767.0 // 32767.0 = Double(Int16.max)
+        let volumeRight = volRight * 32767.0
+        let nSamples = duration * nRepeats
+        let bytesPerSample = 2 // sample is in Int16
+        let nChannels = 2
+        let nBytes = nSamples * bytesPerSample * nChannels
+        let wavArraySize = 44 + nBytes + 8 // what's this 8?
+        var wavArray = [UInt8](repeating: 0, count: Int(wavArraySize))
+        // write header
+        for i in 0 ..< 44 {
+            wavArray[i] = wavHeader44[i]
+        }
+        // re-write the data chunk size
+        var nBytesUInt8 : [UInt8] = [0, 0, 0, 0]
+        let nBytesInt32 = Int32(nBytes) // data size in bytes
+        int32ToBytes(nBytesInt32, byteArray: &nBytesUInt8, index: 0)
+        for i in 0 ..< 4 {
+            wavArray[40 + i] = nBytesUInt8[i]
+        }
+        // load channels
+        var sampleLeftBytes : [UInt8] = [0, 0]
+        var sampleRightBytes : [UInt8] = [0, 0]
+        for i in 0 ..< nSamples {
+            let sampleLeft = wavLeft[i]
+            let sampleRight = wavRight[i]
+            let sampleLeftInt16 = Int16(volumeLeft * sampleLeft)
+            let sampleRightInt16 = Int16(volumeRight * sampleRight)
+            int16ToBytes(sampleLeftInt16, byteArray: &sampleLeftBytes, index: 0)
+            int16ToBytes(sampleRightInt16, byteArray: &sampleRightBytes, index: 0)
 
+            wavArray[44+4*i+0] = sampleRightBytes[0]
+            wavArray[44+4*i+1] = sampleRightBytes[1] // stereo right
+            wavArray[44+4*i+2] = sampleLeftBytes[0]
+            wavArray[44+4*i+3] = sampleLeftBytes[1] // stereo left
+        }
+        let wavData = Data(bytes: wavArray as [UInt8], count: wavArraySize)
+        return wavData
+    }
+    
+}
