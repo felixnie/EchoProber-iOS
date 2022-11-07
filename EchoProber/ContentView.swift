@@ -63,9 +63,21 @@ struct Home : View {
     // for motion
     let motionManager = CMMotionManager()
     let motionQueue = OperationQueue()
-    @State var pitch : [Double] = []
-    @State var yaw : [Double] = []
-    @State var roll : [Double] = []
+    @State var startTime : Double!
+    @State var timeT : [Double] = []
+    @State var gyroX : [Double] = []
+    @State var gyroY : [Double] = []
+    @State var gyroZ : [Double] = []
+    @State var accX : [Double] = []
+    @State var accY : [Double] = []
+    @State var accZ : [Double] = []
+    @State var magX : [Double] = []
+    @State var magY : [Double] = []
+    @State var magZ : [Double] = []
+    @State var oriPitch : [Double] = []
+    @State var oriYaw : [Double] = []
+    @State var oriRoll : [Double] = []
+    // for motion debug
     @State var wasPlaying = false
     
     
@@ -259,7 +271,60 @@ struct Home : View {
                     print(error.localizedDescription)
                 }
                 
-                // MARK: motion queue
+                // MARK: gyro acc mag, ori
+                motionManager.deviceMotionUpdateInterval = 0.01
+                // for calibrated magnetic field
+                motionManager.showsDeviceMovementDisplay = true
+                motionManager.startDeviceMotionUpdates(using: CMAttitudeReferenceFrame.xArbitraryCorrectedZVertical, to: OperationQueue.main) { (data, error) in
+                    // handle device motion updates
+                    if isPlaying {
+                        if timeT.isEmpty {
+                            startTime = data!.timestamp
+                            if data!.magneticField.accuracy.rawValue == -1 {
+                                printInfo(message: "Magnetometer is not calibrated.")
+                            }
+                        }
+                        timeT.append(data!.timestamp - startTime)
+                        // get gyroscope sensor data
+                        gyroX.append(data!.rotationRate.x)
+                        gyroY.append(data!.rotationRate.y)
+                        gyroZ.append(data!.rotationRate.z)
+                        // get accelerometer sensor data
+                        accX.append(data!.userAcceleration.x)
+                        accY.append(data!.userAcceleration.y)
+                        accZ.append(data!.userAcceleration.z)
+                        // get magnetometer sensor data
+                        // data!.magneticField.accuracy
+                        magX.append(data!.magneticField.field.x)
+                        magY.append(data!.magneticField.field.y)
+                        magZ.append(data!.magneticField.field.z)
+                        // get attitude orientation
+                        oriPitch.append(data!.attitude.pitch)
+                        oriYaw.append(data!.attitude.yaw)
+                        oriRoll.append(data!.attitude.roll)
+                        // get gravity vector
+                        // motion.gravity.x
+                        // motion.gravity.y
+                        // motion.gravity.z
+                        
+                        // debug
+                        print(data!.timestamp - startTime)
+                        print(data!.rotationRate)
+                        print(data!.userAcceleration)
+                        print(data!.magneticField.accuracy.rawValue)
+                        print(data!.magneticField.field)
+                        print(data!.attitude)
+                    }
+                }
+                
+                
+                /* without calibrated magnetic field
+                motionManager.startDeviceMotionUpdates(to: .main) { (data, error) in
+                    // handle device motion updates
+                }
+                */
+                
+                /* MARK: orientation
                 motionManager.startDeviceMotionUpdates(to: motionQueue) { (data: CMDeviceMotion?, error: Error?) in
                     guard let data = data else {
                         print("Error: \(error!)")
@@ -274,28 +339,21 @@ struct Home : View {
                             pitch.append(motion.pitch / Double.pi * 180)
                             yaw.append(motion.yaw / Double.pi * 180)
                             roll.append(motion.roll / Double.pi * 180)
-                            
-                            // debug
-                            // print(motion.pitch / Double.pi * 180)
-                            // print(motion.yaw / Double.pi * 180)
-                            // print(motion.roll / Double.pi * 180)
                         }
-                        
+
+                        // debug: check time interval
                         if isPlaying && !wasPlaying {
-                            // debug
                             print("start motion recorder")
                             printDate()
                             wasPlaying.toggle()
                         }
-                        
                         if !isPlaying && wasPlaying {
-                            // debug
                             print("stop motion recorder")
                             printDate()
                             wasPlaying.toggle()
                         }
                     }
-                }
+                } */
             }
             catch{
                 print(error.localizedDescription)
@@ -453,8 +511,7 @@ struct Home : View {
                 // AVAudioConverter is used to convert the microphone input to the format required for the model.(pcm 16)
                 // let pcmBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat!, frameCapacity: AVAudioFrameCount(outputFormat!.sampleRate * 2.0))
                 let pcmBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat!, frameCapacity: AVAudioFrameCount(actualBufferSize))
-//                var error: NSError? = nil
-//
+
                 let inputBlock: AVAudioConverterInputBlock = {inNumPackets, outStatus in
                     outStatus.pointee = AVAudioConverterInputStatus.haveData
                     return buffer
@@ -609,9 +666,9 @@ struct Home : View {
     // MARK: saveMotionData
     func saveMotionData() {
         // create csv
-        var csvString = "pitch,yaw,roll\n"
-        for i in 0..<pitch.count {
-            let dataString = String(format: "%f,%f,%f\n", pitch[i], yaw[i], roll[i])
+        var csvString = "Time (s),Gyroscope X (deg/s),Gyroscope Y (deg/s),Gyroscope Z (deg/s),Accelerometer X (g),Accelerometer Y (g),Accelerometer Z (g),Magnetometer X (uT),Magnetometer Y (uT),Magnetometer Z (uT),Pitch (deg),Yaw (deg),Roll (deg)\n"
+        for i in 0..<timeT.count {
+            let dataString = String(format: "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\n", timeT[i], gyroX[i], gyroY[i], gyroZ[i], accX[i], accY[i], accZ[i], magX[i], magY[i], magZ[i], oriPitch[i], oriYaw[i], oriRoll[i])
             csvString = csvString.appending(dataString)
         }
 
@@ -625,9 +682,24 @@ struct Home : View {
             print("error creating file")
         }
         
-        pitch = []
-        yaw = []
-        roll = []
+        resetMotionData()
+    }
+    
+    // MARK: resetMotionData
+    func resetMotionData() {
+        timeT.removeAll()
+        gyroX.removeAll()
+        gyroY.removeAll()
+        gyroZ.removeAll()
+        accX.removeAll()
+        accY.removeAll()
+        accZ.removeAll()
+        magX.removeAll()
+        magY.removeAll()
+        magZ.removeAll()
+        oriPitch.removeAll()
+        oriYaw.removeAll()
+        oriRoll.removeAll()
     }
         
     // MARK: printDate
