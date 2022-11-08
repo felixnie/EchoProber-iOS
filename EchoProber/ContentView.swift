@@ -77,8 +77,12 @@ struct Home : View {
     @State var oriPitch : [Double] = []
     @State var oriYaw : [Double] = []
     @State var oriRoll : [Double] = []
-    // for motion debug
-    @State var wasPlaying = false
+    @State var gyroRawX : [Double] = []
+    @State var gyroRawY : [Double] = []
+    @State var gyroRawZ : [Double] = []
+    @State var accRawX : [Double] = []
+    @State var accRawY : [Double] = []
+    @State var accRawZ : [Double] = []
     
     
     var body: some View {
@@ -273,8 +277,13 @@ struct Home : View {
                 
                 // MARK: gyro acc mag, ori
                 motionManager.deviceMotionUpdateInterval = 0.01
-                // for calibrated magnetic field
                 motionManager.showsDeviceMovementDisplay = true
+                // if you don't need calibrated magnetic field:
+                // motionManager.startDeviceMotionUpdates(to: .main) { (data, error) in
+                //     handle device motion updates
+                // }
+
+                // the xMagneticNorthZVertical reference frame corresponds to a device whose x axis points toward magnetic north
                 motionManager.startDeviceMotionUpdates(using: CMAttitudeReferenceFrame.xArbitraryCorrectedZVertical, to: OperationQueue.main) { (data, error) in
                     // handle device motion updates
                     if isPlaying {
@@ -285,24 +294,24 @@ struct Home : View {
                             }
                         }
                         timeT.append(data!.timestamp - startTime)
-                        // get gyroscope sensor data
+                        // unbiased rotation rate
                         gyroX.append(data!.rotationRate.x)
                         gyroY.append(data!.rotationRate.y)
                         gyroZ.append(data!.rotationRate.z)
-                        // get accelerometer sensor data
+                        // user-generated acceleration vector (without gravity)
                         accX.append(data!.userAcceleration.x)
                         accY.append(data!.userAcceleration.y)
                         accZ.append(data!.userAcceleration.z)
-                        // get magnetometer sensor data
-                        // data!.magneticField.accuracy
+                        // calibrated magnetic field vector
+                        // data!.magneticField.accuracy should not be -1
                         magX.append(data!.magneticField.field.x)
                         magY.append(data!.magneticField.field.y)
                         magZ.append(data!.magneticField.field.z)
-                        // get attitude orientation
+                        // orientation (or attitude) relative to a reference frame
                         oriPitch.append(data!.attitude.pitch)
                         oriYaw.append(data!.attitude.yaw)
                         oriRoll.append(data!.attitude.roll)
-                        // get gravity vector
+                        // gravity vector
                         // motion.gravity.x
                         // motion.gravity.y
                         // motion.gravity.z
@@ -311,49 +320,57 @@ struct Home : View {
                         print(data!.timestamp - startTime)
                         print(data!.rotationRate)
                         print(data!.userAcceleration)
-                        print(data!.magneticField.accuracy.rawValue)
+                        // print(data!.magneticField.accuracy.rawValue)
                         print(data!.magneticField.field)
                         print(data!.attitude)
                     }
                 }
+
+
                 
-                
-                /* without calibrated magnetic field
-                motionManager.startDeviceMotionUpdates(to: .main) { (data, error) in
-                    // handle device motion updates
-                }
-                */
-                
-                /* MARK: orientation
-                motionManager.startDeviceMotionUpdates(to: motionQueue) { (data: CMDeviceMotion?, error: Error?) in
+                // MARK: gyro raw
+                // raw rotation rate may be biased by other factors such as device acceleration
+                motionManager.startGyroUpdates(to: motionQueue) { (data: CMGyroData?, error: Error?) in
                     guard let data = data else {
                         print("Error: \(error!)")
                         return
                     }
 
-                    let motion: CMAttitude = data.attitude
-                    motionManager.deviceMotionUpdateInterval = 0.01
+                    let motion: CMRotationRate = data.rotationRate
+                    motionManager.gyroUpdateInterval = 0.01
 
                     DispatchQueue.main.async {
                         if isPlaying {
-                            pitch.append(motion.pitch / Double.pi * 180)
-                            yaw.append(motion.yaw / Double.pi * 180)
-                            roll.append(motion.roll / Double.pi * 180)
-                        }
-
-                        // debug: check time interval
-                        if isPlaying && !wasPlaying {
-                            print("start motion recorder")
-                            printDate()
-                            wasPlaying.toggle()
-                        }
-                        if !isPlaying && wasPlaying {
-                            print("stop motion recorder")
-                            printDate()
-                            wasPlaying.toggle()
+                            gyroRawX.append(motion.x)
+                            gyroRawY.append(motion.y)
+                            gyroRawZ.append(motion.z)
+                            // debug
+                            print("raw: \(motion)")
                         }
                     }
-                } */
+                }
+                
+                // MARK: acc raw
+                // raw acceleration includes gravity g (9.8m/s/s)
+                motionManager.startAccelerometerUpdates(to: motionQueue) { (data: CMAccelerometerData?, error: Error?) in
+                    guard let data = data else {
+                        print("Error: \(error!)")
+                        return
+                    }
+                    
+                    let motion: CMAcceleration = data.acceleration
+                    motionManager.accelerometerUpdateInterval = 0.01
+                    
+                    DispatchQueue.main.async {
+                        if isPlaying {
+                            accRawX.append(motion.x)
+                            accRawY.append(motion.y)
+                            accRawZ.append(motion.z)
+                            // debug
+                            print("raw: \(motion)")
+                        }
+                    }
+                }
             }
             catch{
                 print(error.localizedDescription)
@@ -666,9 +683,16 @@ struct Home : View {
     // MARK: saveMotionData
     func saveMotionData() {
         // create csv
-        var csvString = "Time (s),Gyroscope X (deg/s),Gyroscope Y (deg/s),Gyroscope Z (deg/s),Accelerometer X (g),Accelerometer Y (g),Accelerometer Z (g),Magnetometer X (uT),Magnetometer Y (uT),Magnetometer Z (uT),Pitch (deg),Yaw (deg),Roll (deg)\n"
-        for i in 0..<timeT.count {
-            let dataString = String(format: "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\n", timeT[i], gyroX[i], gyroY[i], gyroZ[i], accX[i], accY[i], accZ[i], magX[i], magY[i], magZ[i], oriPitch[i], oriYaw[i], oriRoll[i])
+        var csvString = "Time (s),Gyro X (rad/s),Gyro Y (rad/s),Gyro Z (rad/s),Acc X (g),Acc Y (g),Acc Z (g),Mag X (uT),Mag Y (uT),Mag Z (uT),Pitch (rad),Yaw (rad),Roll (rad),GyroRaw X (rad/s),GyroRaw Y (rad/s),GyroRaw Z (rad/s),AccRaw X (g),AccRaw Y (g),AccRaw Z (g)\n"
+        for i in 0..<min(timeT.count, accRawX.count, gyroRawX.count) {
+            let dataString = String(format: "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\n",
+                                    timeT[i],
+                                    gyroX[i], gyroY[i], gyroZ[i],
+                                    accX[i], accY[i], accZ[i],
+                                    magX[i], magY[i], magZ[i],
+                                    oriPitch[i], oriYaw[i], oriRoll[i],
+                                    gyroRawX[i], gyroRawY[i], gyroRawZ[i],
+                                    accRawX[i], accRawY[i], accRawZ[i])
             csvString = csvString.appending(dataString)
         }
 
@@ -687,6 +711,8 @@ struct Home : View {
     
     // MARK: resetMotionData
     func resetMotionData() {
+        // debug
+        printInfo(message: "[Debug] \(timeT.count) gR: \(gyroRawX.count) aR: \(accRawX.count)")
         timeT.removeAll()
         gyroX.removeAll()
         gyroY.removeAll()
@@ -700,6 +726,12 @@ struct Home : View {
         oriPitch.removeAll()
         oriYaw.removeAll()
         oriRoll.removeAll()
+        gyroRawX.removeAll()
+        gyroRawY.removeAll()
+        gyroRawZ.removeAll()
+        accRawX.removeAll()
+        accRawY.removeAll()
+        accRawZ.removeAll()
     }
         
     // MARK: printDate
