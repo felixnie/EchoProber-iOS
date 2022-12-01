@@ -318,10 +318,10 @@ struct Home : View {
                         
                         // debug
                         print(data!.timestamp - startTime)
-                        print(data!.rotationRate)
-                        print(data!.userAcceleration)
+                        // print(data!.rotationRate)
+                        // print(data!.userAcceleration)
                         // print(data!.magneticField.accuracy.rawValue)
-                        print(data!.magneticField.field)
+                        // print(data!.magneticField.field)
                         print(data!.attitude)
                     }
                 }
@@ -345,7 +345,7 @@ struct Home : View {
                             gyroRawY.append(motion.y)
                             gyroRawZ.append(motion.z)
                             // debug
-                            print("raw: \(motion)")
+                            // print("raw: \(motion)")
                         }
                     }
                 }
@@ -367,7 +367,7 @@ struct Home : View {
                             accRawY.append(motion.y)
                             accRawZ.append(motion.z)
                             // debug
-                            print("raw: \(motion)")
+                            // print("raw: \(motion)")
                         }
                     }
                 }
